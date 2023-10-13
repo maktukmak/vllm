@@ -11,3 +11,6 @@ def set_random_seed(seed: int) -> None:
     torch.manual_seed(seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(seed)
+
+        if model_parallel_is_initialized():
+            model_parallel_cuda_manual_seed(seed)

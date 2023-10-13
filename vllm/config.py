@@ -188,11 +188,14 @@ class CacheConfig:
         self,
         block_size: int,
         gpu_memory_utilization: float,
+        cpu_memory_utilization: float,
         swap_space: int,
         sliding_window: Optional[int] = None,
+        cpu_only = False
     ) -> None:
         self.block_size = block_size
         self.gpu_memory_utilization = gpu_memory_utilization
+        self.cpu_memory_utilization = cpu_memory_utilization
         self.swap_space_bytes = swap_space * _GB
         self.sliding_window = sliding_window
         self._verify_args()
@@ -201,6 +204,8 @@ class CacheConfig:
         self.num_gpu_blocks = None
         self.num_cpu_blocks = None
 
+        self.cpu_only = cpu_only
+    
     def _verify_args(self) -> None:
         if self.gpu_memory_utilization > 1.0:
             raise ValueError(
@@ -242,10 +247,13 @@ class ParallelConfig:
         pipeline_parallel_size: int,
         tensor_parallel_size: int,
         worker_use_ray: bool,
+        cpu_only = False
     ) -> None:
         self.pipeline_parallel_size = pipeline_parallel_size
         self.tensor_parallel_size = tensor_parallel_size
         self.worker_use_ray = worker_use_ray
+
+        self.cpu_only = cpu_only
 
         self.world_size = pipeline_parallel_size * tensor_parallel_size
         if self.world_size > 1:
@@ -277,6 +285,7 @@ class SchedulerConfig:
         max_num_seqs: int,
         max_model_len: int,
         max_paddings: int,
+        cpu_only: bool,
     ) -> None:
         if max_num_batched_tokens is not None:
             self.max_num_batched_tokens = max_num_batched_tokens
@@ -287,6 +296,7 @@ class SchedulerConfig:
         self.max_num_seqs = max_num_seqs
         self.max_model_len = max_model_len
         self.max_paddings = max_paddings
+        self.cpu_only = cpu_only
         self._verify_args()
 
     def _verify_args(self) -> None:

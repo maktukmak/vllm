@@ -56,7 +56,9 @@ class PagedAttention(nn.Module):
         assert self.num_heads % self.num_kv_heads == 0
         self.num_queries_per_kv = self.num_heads // self.num_kv_heads
         self.head_mapping = torch.repeat_interleave(
-            torch.arange(self.num_kv_heads, dtype=torch.int32, device="cuda"),
+            torch.arange(self.num_kv_heads, dtype=torch.int32,
+            #device="cuda",
+            ),
             self.num_queries_per_kv)
 
         if self.head_size not in _SUPPORTED_HEAD_SIZES:
@@ -78,6 +80,72 @@ class PagedAttention(nn.Module):
         if self.sliding_window is not None:
             attn_bias = attn_bias.make_local_attention(self.sliding_window)
         input_metadata.attn_bias = attn_bias
+
+    def attention_forward_cpu(self, query, key, value, scale, p, attn_bias):
+        #scale = 1 / query.shape[-1] ** 0.5
+        query = query * scale
+        #attn = query @ key.transpose(-2, -1)
+
+        attn = torch.matmul(query.transpose(1,2), key.transpose(1, 2).transpose(2, 3))
+
+        if attn_bias is not None:
+            attn = attn + attn_bias.materialize((1, query.shape[2], query.shape[1], key.shape[1])).to(query.device)
+        attn = attn.softmax(-1)
+        attn = torch.nn.functional.dropout(attn, p)
+
+        out = torch.matmul(attn, value.transpose(1,2)).transpose(1,2)
+        return out
+    
+    def single_query_cached_kv_attention_cpu(self,
+                output,
+                query,
+                key_cache,
+                value_cache,
+                head_mapping,
+                scale,
+                block_tables,
+                context_lens,
+                block_size,
+                max_context_len,
+                alibi_slopes,  # alibi_slopes
+            ):
+
+        #scale = 1 / query.shape[-1] ** 0.5
+        query = query * scale
+        #attn = query @ key.transpose(-2, -1)
+
+        attn = torch.matmul(query.transpose(1,2), key.transpose(1, 2).transpose(2, 3))
+
+        if attn_bias is not None:
+            attn = attn + attn_bias.materialize((1, query.shape[2], query.shape[1], key.shape[1])).to(query.device)
+        attn = attn.softmax(-1)
+        attn = torch.nn.functional.dropout(attn, p)
+
+        out = torch.matmul(attn, value.transpose(1,2)).transpose(1,2)
+
+    
+
+    def reshape_and_cache_cpu(self, key,              # [num_tokens, num_heads, head_size]
+                              value,            # [num_tokens, num_heads, head_size]
+                              key_cache,        # [num_blocks, num_heads, head_size/x, block_size, x]
+                              value_cache,      # [num_blocks, num_heads, head_size, block_size]
+                              slot_mapping):    # [num_tokens]
+
+        num_tokens = key.size(0)
+        num_heads = key.size(1)
+        head_size = key.size(2)
+        block_size = key_cache.size(3)
+        x = key_cache.size(4)
+        key_stride = key.stride(0)
+        value_stride = value.stride(0)
+        n = num_heads * head_size
+
+        block_idx = slot_mapping // block_size
+        block_offset = slot_mapping % block_size
+
+        value_cache[block_idx, :, :, block_offset] = value.to(value_cache.device)
+        key_cache[block_idx, :, :, block_offset, :] = key.reshape((num_tokens, num_heads, head_size//x, x)).to(key_cache.device)
+
 
     def multi_query_kv_attention(
         self,
@@ -104,14 +172,25 @@ class PagedAttention(nn.Module):
                                             dim=1)
 
         # TODO(woosuk): The unsqueeze op may incur some CPU overhead. Optimize.
-        out = xops.memory_efficient_attention_forward(
-            query.unsqueeze(0),
-            key.unsqueeze(0),
-            value.unsqueeze(0),
-            attn_bias=input_metadata.attn_bias,
-            p=0.0,
-            scale=self.scale,
-        )
+
+        if query.device.type == 'cuda':
+            out = xops.memory_efficient_attention_forward(
+                query.unsqueeze(0),
+                key.unsqueeze(0),
+                value.unsqueeze(0),
+                attn_bias=input_metadata.attn_bias[0],
+                p=0.0,
+                scale=self.scale,
+            )
+        else:
+            out = self.attention_forward_cpu( query.unsqueeze(0),
+                                        key.unsqueeze(0),
+                                        value.unsqueeze(0),
+                                        scale=self.scale,
+                                        p=0.0,
+                                        attn_bias=input_metadata.attn_bias[0],
+                                        )
+
         # TODO(woosuk): Unnecessary copy. Optimize.
         output.copy_(out.squeeze(0))
         return output
@@ -145,52 +224,67 @@ class PagedAttention(nn.Module):
             input_metadata: metadata for paged attention.
             alibi_slopes: shape = [num_heads]
         """
-        block_size = value_cache.shape[3]
-        num_seqs, num_heads, head_size = query.shape
-        max_num_partitions = (
-            (input_metadata.max_context_len + _PARTITION_SIZE - 1) //
-            _PARTITION_SIZE)
-        # NOTE(woosuk): We use a simple heuristic to decide whether to use
-        # PagedAttention V1 or V2. If the number of partitions is 1, we use
-        # V1 to avoid the overhead of reduction. Also, if the number of
-        # sequences or heads is large, we use V1 since there is enough work
-        # to parallelize.
-        # TODO(woosuk): Tune this heuristic.
-        use_v1 = max_num_partitions == 1 or num_seqs * num_heads > 512
-        if use_v1:
-            # Run PagedAttention V1.
-            attention_ops.paged_attention_v1(
-                output,
-                query,
-                key_cache,
-                value_cache,
-                self.head_mapping,
-                self.scale,
-                input_metadata.block_tables,
-                input_metadata.context_lens,
-                block_size,
-                input_metadata.max_context_len,
-                alibi_slopes,
-            )
+        if query.device.type == "cuda":
+            block_size = value_cache.shape[3]
+            num_seqs, num_heads, head_size = query.shape
+            max_num_partitions = (
+                (input_metadata.max_context_len + _PARTITION_SIZE - 1) //
+                _PARTITION_SIZE)
+            # NOTE(woosuk): We use a simple heuristic to decide whether to use
+            # PagedAttention V1 or V2. If the number of partitions is 1, we use
+            # V1 to avoid the overhead of reduction. Also, if the number of
+            # sequences or heads is large, we use V1 since there is enough work
+            # to parallelize.
+            # TODO(woosuk): Tune this heuristic.
+            use_v1 = max_num_partitions == 1 or num_seqs * num_heads > 512
+            if use_v1:
+                # Run PagedAttention V1.
+                attention_ops.paged_attention_v1(
+                    output,
+                    query,
+                    key_cache,
+                    value_cache,
+                    self.head_mapping,
+                    self.scale,
+                    input_metadata.block_tables,
+                    input_metadata.context_lens,
+                    block_size,
+                    input_metadata.max_context_len,
+                    alibi_slopes,
+                )
+            else:
+                # Run PagedAttention V2.
+                assert _PARTITION_SIZE % block_size == 0
+                tmp_output = torch.empty(
+                    size=(num_seqs, num_heads, max_num_partitions, head_size),
+                    dtype=output.dtype,
+                    device=output.device,
+                )
+                exp_sums = torch.empty(
+                    size=(num_seqs, num_heads, max_num_partitions),
+                    dtype=torch.float32,
+                    device=output.device,
+                )
+                max_logits = torch.empty_like(exp_sums)
+                attention_ops.paged_attention_v2(
+                    output,
+                    exp_sums,
+                    max_logits,
+                    tmp_output,
+                    query,
+                    key_cache,
+                    value_cache,
+                    self.head_mapping,
+                    self.scale,
+                    input_metadata.block_tables,
+                    input_metadata.context_lens,
+                    block_size,
+                    input_metadata.max_context_len,
+                    alibi_slopes,
+                )
         else:
-            # Run PagedAttention V2.
-            assert _PARTITION_SIZE % block_size == 0
-            tmp_output = torch.empty(
-                size=(num_seqs, num_heads, max_num_partitions, head_size),
-                dtype=output.dtype,
-                device=output.device,
-            )
-            exp_sums = torch.empty(
-                size=(num_seqs, num_heads, max_num_partitions),
-                dtype=torch.float32,
-                device=output.device,
-            )
-            max_logits = torch.empty_like(exp_sums)
-            attention_ops.paged_attention_v2(
-                output,
-                exp_sums,
-                max_logits,
-                tmp_output,
+                self.single_query_cached_kv_attention_cpu(
+                                output,
                 query,
                 key_cache,
                 value_cache,
@@ -200,7 +294,7 @@ class PagedAttention(nn.Module):
                 input_metadata.context_lens,
                 block_size,
                 input_metadata.max_context_len,
-                alibi_slopes,
+                alibi_slopes,  # alibi_slopes
             )
 
     def forward(
@@ -271,13 +365,24 @@ class PagedAttention(nn.Module):
                 value_to_cache = value_to_cache[input_metadata.to_cache]
                 slot_mapping = slot_mapping[input_metadata.to_cache]
 
-            cache_ops.reshape_and_cache(
+            
+            if key_cache.device.type == 'cuda':
+                cache_ops.reshape_and_cache(
                 key_to_cache,
                 value_to_cache,
                 key_cache,
                 value_cache,
                 slot_mapping,
-            )
+                )
+            else:
+                self.reshape_and_cache_cpu(
+                    key_to_cache,
+                    value_to_cache,
+                    key_cache,
+                    value_cache,
+                    slot_mapping,
+                )
+            
 
         if input_metadata.num_generation_tokens > 0:
             # Decoding run.

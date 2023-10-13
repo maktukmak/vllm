@@ -59,7 +59,7 @@ def _get_model_architecture(config: PretrainedConfig) -> Type[nn.Module]:
         f"Supported architectures: {list(_MODEL_REGISTRY.keys())}")
 
 
-def get_model(model_config: ModelConfig) -> nn.Module:
+def get_model(model_config: ModelConfig, device: torch.device) -> nn.Module:
     model_class = _get_model_architecture(model_config.hf_config)
 
     # Get the quantization config.
@@ -102,5 +102,5 @@ def get_model(model_config: ModelConfig) -> nn.Module:
             # Load the weights from the cached or downloaded files.
             model.load_weights(model_config.model, model_config.download_dir,
                                model_config.load_format, model_config.revision)
-            model = model.cuda()
+            model = model.to(device)
     return model.eval()
