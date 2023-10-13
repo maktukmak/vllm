@@ -67,7 +67,9 @@ class LLM:
         revision: Optional[str] = None,
         seed: int = 0,
         gpu_memory_utilization: float = 0.9,
+        cpu_memory_utilization: float = 0.5,
         swap_space: int = 4,
+        cpu_only: bool = False,
         **kwargs,
     ) -> None:
         if "disable_log_stats" not in kwargs:
@@ -83,7 +85,9 @@ class LLM:
             revision=revision,
             seed=seed,
             gpu_memory_utilization=gpu_memory_utilization,
+            cpu_memory_utilization=cpu_memory_utilization,
             swap_space=swap_space,
+            cpu_only = cpu_only,
             **kwargs,
         )
         self.llm_engine = LLMEngine.from_engine_args(engine_args)

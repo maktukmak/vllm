@@ -86,7 +86,7 @@ class BlockSpaceManager:
         # Mapping: seq_id -> BlockTable.
         self.block_tables: Dict[int, BlockTable] = {}
 
-    def can_allocate(self, seq_group: SequenceGroup) -> bool:
+    def can_allocate(self, seq_group: SequenceGroup, cpu_only: bool) -> bool:
         # FIXME(woosuk): Here we assume that all sequences in the group share
         # the same prompt. This may not be true for preempted sequences.
         seq = seq_group.get_seqs()[0]
@@ -94,12 +94,19 @@ class BlockSpaceManager:
         if self.block_sliding_window is not None:
             num_required_blocks = min(num_required_blocks,
                                       self.block_sliding_window)
-        num_free_gpu_blocks = self.gpu_allocator.get_num_free_blocks()
-        # Use watermark to avoid frequent cache eviction.
-        return (num_free_gpu_blocks - num_required_blocks >=
-                self.watermark_blocks)
 
-    def allocate(self, seq_group: SequenceGroup) -> None:
+        if not cpu_only:
+            num_free_gpu_blocks = self.gpu_allocator.get_num_free_blocks()
+            # Use watermark to avoid frequent cache eviction.
+            return (num_free_gpu_blocks - num_required_blocks >=
+                    self.watermark_blocks)
+        else:
+            num_free_cpu_blocks = self.cpu_allocator.get_num_free_blocks()
+            return (num_free_cpu_blocks - num_required_blocks >=
+                    0)
+
+
+    def allocate(self, seq_group: SequenceGroup, cpu_only) -> None:
         # NOTE: Here we assume that all sequences in the group have the same
         # prompt.
         seq = seq_group.get_seqs()[0]
@@ -111,7 +118,10 @@ class BlockSpaceManager:
                     and logical_idx >= self.block_sliding_window):
                 block = block_table[logical_idx % self.block_sliding_window]
             else:
-                block = self.gpu_allocator.allocate()
+                if cpu_only:
+                    block = self.cpu_allocator.allocate()
+                else:
+                    block = self.gpu_allocator.allocate()
             # Set the reference counts of the token blocks.
             block.ref_count = seq_group.num_seqs()
             block_table.append(block)
@@ -120,14 +130,18 @@ class BlockSpaceManager:
         for seq in seq_group.get_seqs():
             self.block_tables[seq.seq_id] = block_table.copy()
 
-    def can_append_slot(self, seq_group: SequenceGroup) -> bool:
+    def can_append_slot(self, seq_group: SequenceGroup, cpu_only: bool) -> bool:
         # Simple heuristic: If there is at least one free block
         # for each sequence, we can append.
-        num_free_gpu_blocks = self.gpu_allocator.get_num_free_blocks()
+        if cpu_only:
+            num_free_gpu_blocks = self.cpu_allocator.get_num_free_blocks()
+        else:
+            num_free_gpu_blocks = self.gpu_allocator.get_num_free_blocks()
+
         num_seqs = seq_group.num_seqs(status=SequenceStatus.RUNNING)
         return num_seqs <= num_free_gpu_blocks
 
-    def append_slot(self, seq: Sequence) -> Optional[Tuple[int, int]]:
+    def append_slot(self, seq: Sequence, cpu_only: bool) -> Optional[Tuple[int, int]]:
         """Allocate a physical slot for a new token."""
         logical_blocks = seq.logical_token_blocks
         block_table = self.block_tables[seq.seq_id]
@@ -141,22 +155,31 @@ class BlockSpaceManager:
             else:
                 # The sequence has a new logical block.
                 # Allocate a new physical block.
-                block = self.gpu_allocator.allocate()
+                if cpu_only:
+                    block = self.cpu_allocator.allocate()
+                else:
+                    block = self.gpu_allocator.allocate()
                 block_table.append(block)
                 return None
 
         # We want to append the token to the last physical block.
         last_block = block_table[-1]
-        assert last_block.device == Device.GPU
+        if not cpu_only:
+            assert last_block.device == Device.GPU
         if last_block.ref_count == 1:
             # Not shared with other sequences. Appendable.
             return None
         else:
             # The last block is shared with other sequences.
             # Copy on Write: Allocate a new block and copy the tokens.
-            new_block = self.gpu_allocator.allocate()
-            block_table[-1] = new_block
-            self.gpu_allocator.free(last_block)
+            if cpu_only:
+                new_block = self.gpu_allocator.allocate()
+                block_table[-1] = new_block
+                self.cpu_allocator.free(last_block)
+            else:
+                new_block = self.gpu_allocator.allocate()
+                block_table[-1] = new_block
+                self.gpu_allocator.free(last_block)
             return last_block.block_number, new_block.block_number
 
     def fork(self, parent_seq: Sequence, child_seq: Sequence) -> None:

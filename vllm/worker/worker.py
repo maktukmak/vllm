@@ -53,31 +53,38 @@ class Worker:
         # Env vars will be set by Ray.
         self.rank = self.rank if self.rank is not None else int(
             os.getenv("RANK", "-1"))
-        local_rank = int(os.getenv("LOCAL_RANK", "0"))
-        self.device = torch.device(f"cuda:{local_rank}")
-        if self.rank < 0:
-            raise ValueError("Invalid or unspecified rank.")
-        torch.cuda.set_device(self.device)
+        
+        if not self.parallel_config.cpu_only:
+            local_rank = int(os.getenv("LOCAL_RANK", "0"))
+            self.device = torch.device(f"cuda:{local_rank}")
+            if self.rank < 0:
+                raise ValueError("Invalid or unspecified rank.")
+            torch.cuda.set_device(self.device)
+        else:
+            self.device = torch.device('cpu')
 
         # Initialize the distributed environment.
-        _init_distributed_environment(self.parallel_config, self.rank,
-                                      self.distributed_init_method)
+        _init_distributed_environment(self.parallel_config, self.rank, self.device,
+                                      self.distributed_init_method, )
 
         # Initialize the model.
         set_random_seed(self.model_config.seed)
-        self.model = get_model(self.model_config)
+        self.model = get_model(self.model_config, self.device)
 
     @torch.inference_mode()
     def profile_num_available_blocks(
         self,
         block_size: int,
         gpu_memory_utilization: float,
+        cpu_memory_utilization: float,
         cpu_swap_space: int,
+        cpu_only: bool,
     ) -> Tuple[int, int]:
         # Profile the memory usage of the model and get the maximum number of
         # cache blocks that can be allocated with the remaining free memory.
-        torch.cuda.empty_cache()
-        torch.cuda.reset_peak_memory_stats()
+        if not self.scheduler_config.cpu_only:
+            torch.cuda.empty_cache()
+            torch.cuda.reset_peak_memory_stats()
 
         # Profile memory usage with max_num_sequences sequences and the total
         # number of tokens equal to max_num_batched_tokens.
@@ -114,20 +121,37 @@ class Worker:
             cache_events=None,
         )
 
-        # Calculate the number of blocks that can be allocated with the
-        # profiled peak memory.
-        torch.cuda.synchronize()
-        peak_memory = torch.cuda.max_memory_allocated()
-        total_gpu_memory = get_gpu_memory()
         cache_block_size = CacheEngine.get_cache_block_size(
-            block_size, self.model_config, self.parallel_config)
-        num_gpu_blocks = int(
-            (total_gpu_memory * gpu_memory_utilization - peak_memory) //
-            cache_block_size)
-        num_cpu_blocks = int(cpu_swap_space // cache_block_size)
-        num_gpu_blocks = max(num_gpu_blocks, 0)
-        num_cpu_blocks = max(num_cpu_blocks, 0)
-        torch.cuda.empty_cache()
+                block_size, self.model_config, self.parallel_config)
+
+        if cpu_only:
+
+            import psutil
+            total_cpu_memory = psutil.virtual_memory().available
+            num_cpu_blocks = int(
+                (total_cpu_memory * cpu_memory_utilization) //
+                cache_block_size)
+            
+            num_gpu_blocks = 0
+
+        else:
+
+            # Calculate the number of blocks that can be allocated with the
+            # profiled peak memory.
+            torch.cuda.synchronize()
+            peak_memory = torch.cuda.max_memory_allocated()
+            total_gpu_memory = get_gpu_memory()
+
+            num_gpu_blocks = int(
+                (total_gpu_memory * gpu_memory_utilization - peak_memory) //
+                cache_block_size)
+            num_cpu_blocks = int(cpu_swap_space // cache_block_size)
+            num_gpu_blocks = max(num_gpu_blocks, 0)
+            num_cpu_blocks = max(num_cpu_blocks, 0)
+            torch.cuda.empty_cache()
+
+
+        
 
         # Reset the seed to ensure that the random state is not affected by
         # the model initialization and profiling.
@@ -148,8 +172,11 @@ class Worker:
 
         self.cache_engine = CacheEngine(self.cache_config, self.model_config,
                                         self.parallel_config)
-        self.cache_events = self.cache_engine.events
-        self.gpu_cache = self.cache_engine.gpu_cache
+        if not self.cache_engine.cache_config.cpu_only:
+            self.cache_events = self.cache_engine.events
+            self.gpu_cache = self.cache_engine.gpu_cache
+        else:
+            self.cpu_cache = self.cache_engine.cpu_cache
 
     def _prepare_inputs(
         self,
@@ -247,23 +274,23 @@ class Worker:
         # Convert to tensors.
         tokens_tensor = torch.tensor(input_tokens,
                                      dtype=torch.long,
-                                     device="cuda")
+                                     device=self.device)
         positions_tensor = torch.tensor(input_positions,
                                         dtype=torch.long,
-                                        device="cuda")
+                                        device=self.device)
         slot_mapping_tensor = torch.tensor(slot_mapping,
                                            dtype=torch.int,
-                                           device="cuda")
+                                           device=self.device)
         context_lens_tensor = torch.tensor(context_lens,
                                            dtype=torch.int,
-                                           device="cuda")
+                                           device=self.device)
         padded_block_tables = [
             _pad_to_max(block_table, max_num_blocks_per_seq)
             for block_table in generation_block_tables
         ]
         block_tables_tensor = torch.tensor(padded_block_tables,
                                            dtype=torch.int,
-                                           device="cuda")
+                                           device=self.device)
 
         seq_data: Dict[int, SequenceData] = {}
         for seq_group_metadata in seq_group_metadata_list:
@@ -316,12 +343,17 @@ class Worker:
         # Prepare input tensors.
         input_tokens, input_positions, input_metadata = self._prepare_inputs(
             seq_group_metadata_list)
+        
+        if self.cache_config.cpu_only:
+            cache = self.cpu_cache
+        else:
+            cache = self.gpu_cache
 
         # Execute the model.
         output = self.model(
             input_ids=input_tokens,
             positions=input_positions,
-            kv_caches=self.gpu_cache,
+            kv_caches=cache,
             input_metadata=input_metadata,
             cache_events=cache_events,
         )
@@ -331,6 +363,7 @@ class Worker:
 def _init_distributed_environment(
     parallel_config: ParallelConfig,
     rank: int,
+    device: torch.device, 
     distributed_init_method: Optional[str] = None,
 ) -> None:
     """Initialize the distributed environment."""
@@ -346,15 +379,21 @@ def _init_distributed_environment(
             "distributed_init_method must be set if torch.distributed "
             "is not already initialized")
     else:
+        if device.type == 'cpu':
+            backend="gloo"
+        else:
+            backend="nccl"
+
         torch.distributed.init_process_group(
-            backend="nccl",
+            backend=backend,
             world_size=parallel_config.world_size,
             rank=rank,
             init_method=distributed_init_method,
         )
 
-    # A small all_reduce for warmup.
-    torch.distributed.all_reduce(torch.zeros(1).cuda())
+    if device.type == 'cuda':
+        # A small all_reduce for warmup.
+        torch.distributed.all_reduce(torch.zeros(1).cuda())
     initialize_model_parallel(parallel_config.tensor_parallel_size,
                               parallel_config.pipeline_parallel_size)
 

@@ -112,7 +112,8 @@ class VocabParallelEmbedding(torch.nn.Module):
 
         self.weight = Parameter(torch.empty(
             self.num_embeddings_per_partition, self.embedding_dim,
-            device=torch.cuda.current_device(), dtype=params_dtype))
+            #device=torch.cuda.current_device(),
+            dtype=params_dtype))
 
     def forward(self, input_):
         if self.tensor_model_parallel_size > 1:
@@ -200,7 +201,7 @@ class ColumnParallelLinear(torch.nn.Module):
         if bias:
             self.bias = Parameter(torch.empty(
                 self.output_size_per_partition,
-                device=torch.cuda.current_device(),
+                #device=torch.cuda.current_device(),
                 dtype=params_dtype))
             set_tensor_model_parallel_attributes(self.bias, True, 0, stride)
             # Always initialize bias to zero.
@@ -212,7 +213,8 @@ class ColumnParallelLinear(torch.nn.Module):
     def create_weights(self, dtype: torch.dtype) -> None:
         self.weight = Parameter(torch.empty(
             self.output_size_per_partition, self.input_size,
-            device=torch.cuda.current_device(), dtype=dtype))
+            #device=torch.cuda.current_device(),
+            dtype=dtype))
 
     def apply_weights(
         self,
@@ -318,7 +320,8 @@ class RowParallelLinear(torch.nn.Module):
 
         if bias:
             self.bias = Parameter(torch.empty(
-                self.output_size, device=torch.cuda.current_device(),
+                self.output_size, 
+                #device=torch.cuda.current_device(),
                 dtype=params_dtype))
 
             # Always initialize bias to zero.
@@ -330,7 +333,8 @@ class RowParallelLinear(torch.nn.Module):
     def create_weights(self, dtype: torch.dtype) -> None:
         self.weight = Parameter(torch.empty(
                 self.output_size, self.input_size_per_partition,
-                device=torch.cuda.current_device(), dtype=dtype))
+                device=torch.cuda.current_device(),
+                dtype=dtype))
 
     def apply_weights(self, x: torch.Tensor) -> torch.Tensor:
         return F.linear(x, self.weight)

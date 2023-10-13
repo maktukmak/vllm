@@ -193,7 +193,9 @@ class LLMEngine:
             get_all_outputs=True,
             block_size=self.cache_config.block_size,
             gpu_memory_utilization=self.cache_config.gpu_memory_utilization,
+            cpu_memory_utilization=self.cache_config.cpu_memory_utilization,
             cpu_swap_space=self.cache_config.swap_space_bytes,
+            cpu_only = self.cache_config.cpu_only,
         )
 
         # Since we use a shared centralized controller, we take the minimum
@@ -205,10 +207,11 @@ class LLMEngine:
         logger.info(f"# GPU blocks: {num_gpu_blocks}, "
                     f"# CPU blocks: {num_cpu_blocks}")
 
-        if num_gpu_blocks <= 0:
-            raise ValueError("No available memory for the cache blocks. "
-                             "Try increasing `gpu_memory_utilization` when "
-                             "initializing the engine.")
+        if not self.cache_config.cpu_only:
+            if num_gpu_blocks <= 0:
+                raise ValueError("No available memory for the cache blocks. "
+                                "Try increasing `gpu_memory_utilization` when "
+                                "initializing the engine.")
 
         self.cache_config.num_gpu_blocks = num_gpu_blocks
         self.cache_config.num_cpu_blocks = num_cpu_blocks

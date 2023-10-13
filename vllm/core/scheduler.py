@@ -153,7 +153,7 @@ class Scheduler:
                     continue
 
                 # If the sequence group cannot be allocated, stop.
-                if not self.block_manager.can_allocate(seq_group):
+                if not self.block_manager.can_allocate(seq_group, self.cache_config.cpu_only):
                     break
 
                 # If the number of batched tokens exceeds the limit, stop.
@@ -198,7 +198,7 @@ class Scheduler:
         preempted: List[SequenceGroup] = []
         while self.running:
             seq_group = self.running.pop(0)
-            while not self.block_manager.can_append_slot(seq_group):
+            while not self.block_manager.can_append_slot(seq_group, self.cache_config.cpu_only):
                 if self.running:
                     # Preempt the lowest-priority sequence groups.
                     victim_seq_group = self.running.pop(-1)
@@ -298,7 +298,7 @@ class Scheduler:
         ]
 
     def _allocate(self, seq_group: SequenceGroup) -> None:
-        self.block_manager.allocate(seq_group)
+        self.block_manager.allocate(seq_group, self.cache_config.cpu_only)
         for seq in seq_group.get_seqs():
             seq.status = SequenceStatus.RUNNING
 
@@ -308,7 +308,7 @@ class Scheduler:
         blocks_to_copy: Dict[int, List[int]],
     ) -> None:
         for seq in seq_group.get_seqs(status=SequenceStatus.RUNNING):
-            ret = self.block_manager.append_slot(seq)
+            ret = self.block_manager.append_slot(seq, self.cache_config.cpu_only)
             if ret is not None:
                 src_block, dst_block = ret
                 if src_block in blocks_to_copy:
