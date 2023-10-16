@@ -114,6 +114,10 @@ class PagedAttention(nn.Module):
         query = query * scale
         #attn = query @ key.transpose(-2, -1)
 
+        block_idx 
+        block_offset
+        key = key_cache
+
         attn = torch.matmul(query.transpose(1,2), key.transpose(1, 2).transpose(2, 3))
 
         if attn_bias is not None:
