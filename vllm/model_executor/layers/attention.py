@@ -141,16 +141,10 @@ class PagedAttention(nn.Module):
                 key = torch.cat([key, key_r], axis=0)
                 value = torch.cat([value, key_r], axis=0)
 
-            attn = torch.matmul(query[0:1].unsqueeze(0).transpose(1,2), key.unsqueeze(0).transpose(1, 2).transpose(2, 3))
+            attn = torch.matmul(query[n:n+1].unsqueeze(0).transpose(1,2), key.unsqueeze(0).transpose(1, 2).transpose(2, 3))
             attn = attn.softmax(-1)
-            output = torch.matmul(attn, value.unsqueeze(0).transpose(1,2)).transpose(1,2)
+            output[n:n+1] = torch.matmul(attn, value.unsqueeze(0).transpose(1,2)).transpose(1,2).squeeze(0)
 
-
-        attn = torch.matmul(query[0:1].unsqueeze(0).transpose(1,2), key.transpose(1, 2).transpose(2, 3))
-        attn = attn.softmax(-1)
-
-        output = torch.matmul(attn, value.transpose(1,2)).transpose(1,2)
-    
 
     def reshape_and_cache_cpu(self, key,              # [num_tokens, num_heads, head_size]
                               value,            # [num_tokens, num_heads, head_size]
