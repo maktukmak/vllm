@@ -110,23 +110,46 @@ class PagedAttention(nn.Module):
                 alibi_slopes,  # alibi_slopes
             ):
 
-        #scale = 1 / query.shape[-1] ** 0.5
+        num_seqs = query.size(0)
+        num_heads = query.size(1)
+        head_size = query.size(2)
+        x = 4
+
+
         query = query * scale
-        #attn = query @ key.transpose(-2, -1)
 
-        block_idx 
-        block_offset
-        key = key_cache
+        BLOCK_SIZE = key_cache.size(3)
+        num_blocks = (context_lens + BLOCK_SIZE - 1) // BLOCK_SIZE
 
-        attn = torch.matmul(query.transpose(1,2), key.transpose(1, 2).transpose(2, 3))
 
-        if attn_bias is not None:
-            attn = attn + attn_bias.materialize((1, query.shape[2], query.shape[1], key.shape[1])).to(query.device)
+        for n in range(num_seqs): 
+
+            key = torch.empty(0, num_heads, head_size)
+            value = torch.empty(0, num_heads, head_size)
+
+            for i in range(num_blocks[n]):
+                if i == num_blocks[n]-1:
+                    offset = context_lens[n] % BLOCK_SIZE
+                else:
+                    offset = i * BLOCK_SIZE
+
+                key_r = key_cache[block_tables[n][i], :, :, :offset, :]
+                key_r = key_r.permute(2, 0, 1, 3).flatten(-2,-1)
+
+                value_r = value_cache[block_tables[n][i], :, :, :offset]
+
+                key = torch.cat([key, key_r], axis=0)
+                value = torch.cat([value, key_r], axis=0)
+
+            attn = torch.matmul(query[0:1].unsqueeze(0).transpose(1,2), key.unsqueeze(0).transpose(1, 2).transpose(2, 3))
+            attn = attn.softmax(-1)
+            output = torch.matmul(attn, value.unsqueeze(0).transpose(1,2)).transpose(1,2)
+
+
+        attn = torch.matmul(query[0:1].unsqueeze(0).transpose(1,2), key.transpose(1, 2).transpose(2, 3))
         attn = attn.softmax(-1)
-        attn = torch.nn.functional.dropout(attn, p)
 
-        out = torch.matmul(attn, value.transpose(1,2)).transpose(1,2)
-
+        output = torch.matmul(attn, value.transpose(1,2)).transpose(1,2)
     
 
     def reshape_and_cache_cpu(self, key,              # [num_tokens, num_heads, head_size]
