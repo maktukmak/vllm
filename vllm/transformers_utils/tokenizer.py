@@ -112,6 +112,9 @@ def detokenize_incrementally(
     if prev_tokens is None:
         new_tokens = tokenizer.convert_ids_to_tokens(
             all_input_ids, skip_special_tokens=skip_special_tokens)
+        
+        new_tokens = ['<s>' if t==None else t for t in new_tokens]
+
         output_tokens = new_tokens
         # 5 is an arbitrary value that should work for all
         # tokenizers (bigger = more conservative).
@@ -122,6 +125,9 @@ def detokenize_incrementally(
         # Put new_token_id in a list so skip_special_tokens is respected
         new_tokens = tokenizer.convert_ids_to_tokens(
             [new_token_id], skip_special_tokens=skip_special_tokens)
+        
+        new_tokens = ['<s>' if t==None else t for t in new_tokens]
+
         output_tokens = prev_tokens + new_tokens
 
     # The prefix text is necessary only to defeat cleanup algorithms in

@@ -72,6 +72,8 @@ def run_vllm(
         tensor_parallel_size=tensor_parallel_size,
         seed=seed,
         trust_remote_code=trust_remote_code,
+        dtype='float32',
+        cpu_only = True
     )
 
     # Add the requests to the engine.

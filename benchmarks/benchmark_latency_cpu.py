@@ -5,8 +5,10 @@ import time
 import numpy as np
 import torch
 from tqdm import tqdm
+import os
 
 from vllm import LLM, SamplingParams
+import pickle
 
 
 def main(args: argparse.Namespace):
@@ -20,11 +22,11 @@ def main(args: argparse.Namespace):
         tokenizer=args.tokenizer,
         quantization=args.quantization,
         tensor_parallel_size=args.tensor_parallel_size,
-        max_num_seqs=args.batch_size,
-        max_num_batched_tokens=args.batch_size * args.input_len,
+        #max_num_seqs=args.batch_size,
+        #max_num_batched_tokens=args.batch_size * args.input_len,
         trust_remote_code=args.trust_remote_code,
         dtype='float32',
-        cpu_only = True
+        cpu_only = False
     )
 
     sampling_params = SamplingParams(
@@ -60,7 +62,18 @@ def main(args: argparse.Namespace):
     latencies = []
     for _ in tqdm(range(args.num_iters), desc="Profiling iterations"):
         latencies.append(run_to_completion(profile=False))
-    print(f'Avg latency: {np.mean(latencies)} seconds')
+    print(f'Avg latency: {np.mean(latencies) / args.batch_size} seconds')
+
+
+    if os.path.isfile('d_res.pickle'):
+        with open('d_res.pickle', 'rb') as handle:
+            d_res = pickle.load(handle)
+    else:
+        d_res = {}
+
+    d_res[(args.input_len, args.batch_size)] = np.mean(latencies) / args.batch_size
+    with open('d_res.pickle', 'wb') as handle:
+        pickle.dump(d_res, handle)
 
 
 if __name__ == '__main__':
@@ -75,8 +88,8 @@ if __name__ == '__main__':
                         default=None)
     parser.add_argument('--tensor-parallel-size', '-tp', type=int, default=1)
     parser.add_argument('--input-len', type=int, default=64)
-    parser.add_argument('--output-len', type=int, default=128)
-    parser.add_argument('--batch-size', type=int, default=32)
+    parser.add_argument('--output-len', type=int, default=1)
+    parser.add_argument('--batch-size', type=int, default=1)
     parser.add_argument('--n',
                         type=int,
                         default=1,
@@ -84,10 +97,11 @@ if __name__ == '__main__':
     parser.add_argument('--use-beam-search', action='store_true')
     parser.add_argument('--num-iters',
                         type=int,
-                        default=3,
+                        default=1,
                         help='Number of iterations to run.')
     parser.add_argument('--trust-remote-code',
                         action='store_true',
                         help='trust remote code from huggingface')
     args = parser.parse_args()
     main(args)
+

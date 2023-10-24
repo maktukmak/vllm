@@ -132,8 +132,7 @@ class PagedAttention(nn.Module):
         query = query * scale
 
         BLOCK_SIZE = key_cache.size(3)
-        num_blocks = (context_lens + BLOCK_SIZE - 1) // BLOCK_SIZE
-
+        num_blocks = (context_lens - 1 + BLOCK_SIZE ) // BLOCK_SIZE
 
         for n in range(num_seqs): 
 
@@ -142,17 +141,18 @@ class PagedAttention(nn.Module):
 
             for i in range(num_blocks[n]):
                 if i == num_blocks[n]-1:
-                    offset = context_lens[n] % BLOCK_SIZE
+                    offset = (context_lens[n]-1) % BLOCK_SIZE + 1
                 else:
-                    offset = i * BLOCK_SIZE
+                    offset = (i+1) * BLOCK_SIZE
 
                 key_r = key_cache[block_tables[n][i], :, :, :offset, :]
                 key_r = key_r.permute(2, 0, 1, 3).flatten(-2,-1)
 
                 value_r = value_cache[block_tables[n][i], :, :, :offset]
+                value_r = value_r.permute(2, 0, 1)
 
                 key = torch.cat([key, key_r], axis=0)
-                value = torch.cat([value, key_r], axis=0)
+                value = torch.cat([value, value_r], axis=0)
 
             attn = torch.matmul(query[n:n+1].unsqueeze(0).transpose(1,2), key.unsqueeze(0).transpose(1, 2).transpose(2, 3))
             attn = attn.softmax(-1)
