@@ -99,12 +99,12 @@ class CacheEngine:
             logger.warning("Using 'pin_memory=False' as WSL is detected. "
                            "This may slow down the performance.")
         for _ in range(self.num_layers):
-            key_blocks = torch.empty(
+            key_blocks = torch.zeros(
                 size=(self.num_cpu_blocks, *key_block_shape),
                 device = torch.device('cpu'),
                 dtype=self.dtype,
             )
-            value_blocks = torch.empty(
+            value_blocks = torch.zeros(
                 size=(self.num_cpu_blocks, *value_block_shape),
                 dtype=self.dtype,
             )
