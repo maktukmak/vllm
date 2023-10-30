@@ -333,7 +333,7 @@ class RowParallelLinear(torch.nn.Module):
     def create_weights(self, dtype: torch.dtype) -> None:
         self.weight = Parameter(torch.empty(
                 self.output_size, self.input_size_per_partition,
-                device=torch.cuda.current_device(),
+                #device=torch.cuda.current_device(),
                 dtype=dtype))
 
     def apply_weights(self, x: torch.Tensor) -> torch.Tensor:

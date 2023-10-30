@@ -25,8 +25,9 @@ from typing import Tuple, Union
 
 import torch
 import torch.nn as nn
-
-from vllm import pos_encoding_ops
+import os
+if os.getenv('VLLM_CPU_ONLY', "0") == "0":
+    from vllm import pos_encoding_ops
 
 
 class RotaryEmbedding(nn.Module):

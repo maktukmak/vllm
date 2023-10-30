@@ -4,8 +4,10 @@ from platform import uname
 
 import psutil
 import torch
+import os
 
-from vllm import cuda_utils
+if os.getenv('VLLM_CPU_ONLY', "0") == "0":
+    from vllm import cuda_utils
 
 
 class Device(enum.Enum):

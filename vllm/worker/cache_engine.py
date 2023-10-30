@@ -3,7 +3,9 @@ from typing import Dict, List, Tuple
 
 import torch
 
-from vllm import cache_ops
+import os
+if os.getenv('VLLM_CPU_ONLY', "0") == "0":
+    from vllm import cache_ops
 from vllm.config import CacheConfig, ModelConfig, ParallelConfig
 from vllm.logger import init_logger
 from vllm.utils import in_wsl
