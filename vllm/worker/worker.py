@@ -170,7 +170,8 @@ class Worker:
         else:
             max_seq_len = min(self.scheduler_config.max_model_len,
                               self.sliding_window)
-        _check_if_can_support_max_seq_len(max_seq_len, self.block_size)
+        if self.device.type == 'cuda':
+            _check_if_can_support_max_seq_len(max_seq_len, self.block_size)
 
         self.cache_engine = CacheEngine(self.cache_config, self.model_config,
                                         self.parallel_config)

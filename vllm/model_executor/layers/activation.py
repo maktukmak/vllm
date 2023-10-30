@@ -2,7 +2,9 @@
 import torch
 import torch.nn as nn
 
-from vllm import activation_ops
+import os
+if os.getenv('VLLM_CPU_ONLY', "0") == "0":
+    from vllm import activation_ops
 
 
 class SiluAndMul(nn.Module):

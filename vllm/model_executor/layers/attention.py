@@ -6,9 +6,10 @@ import torch.nn as nn
 from xformers import ops as xops
 from xformers.ops.fmha.attn_bias import (BlockDiagonalCausalMask,
                                          LowerTriangularMaskWithTensorBias)
-
-from vllm import attention_ops
-from vllm import cache_ops
+import os
+if os.getenv('VLLM_CPU_ONLY', "0") == "0":
+    from vllm import attention_ops
+    from vllm import cache_ops
 from vllm.model_executor.input_metadata import InputMetadata
 from vllm.model_executor.layers.rotary_embedding import (
     DynamicNTKScalingRotaryEmbedding, LinearScalingRotaryEmbedding,
@@ -82,9 +83,8 @@ class PagedAttention(nn.Module):
         input_metadata.attn_bias = attn_bias
 
     def attention_forward_cpu(self, query, key, value, scale, p, attn_bias):
-        #scale = 1 / query.shape[-1] ** 0.5
+
         query = query * scale
-        #attn = query @ key.transpose(-2, -1)
 
         attn = torch.matmul(query.transpose(1,2), key.transpose(1, 2).transpose(2, 3))
 

@@ -20,8 +20,9 @@ br1 = np.arange(len(prompt_lens))
 br2 = [x + barWidth for x in br1] 
 
 
-single = [d_res[(len, 1)] for len in prompt_lens]
-dynamic = [d_res[(len, batch_size)] for len in prompt_lens]
+single = np.array([d_res[(len, 1)] for len in prompt_lens])
+dynamic = np.array([d_res[(len, batch_size)] for len in prompt_lens])
+speedup = single / dynamic
 
 
 plt.bar(br1, single, color ='r', width = barWidth, 
@@ -35,4 +36,9 @@ plt.xticks([r + barWidth/2 for r in range(len(prompt_lens))],
         prompt_lens)
 plt.title('Batch size: ' + str(batch_size) )
 
+
+for i in br1:
+    plt.text(i, max(single[i], dynamic[i]) + 0.2, "{:.2f}".format(speedup[i]) + "X")
+
+plt.legend()
 plt.savefig('res_' + str(batch_size) + '.jpg')

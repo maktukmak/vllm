@@ -26,7 +26,7 @@ def main(args: argparse.Namespace):
         #max_num_batched_tokens=args.batch_size * args.input_len,
         trust_remote_code=args.trust_remote_code,
         dtype='float32',
-        cpu_only = False
+        cpu_only = True
     )
 
     sampling_params = SamplingParams(
@@ -88,8 +88,8 @@ if __name__ == '__main__':
                         default=None)
     parser.add_argument('--tensor-parallel-size', '-tp', type=int, default=1)
     parser.add_argument('--input-len', type=int, default=64)
-    parser.add_argument('--output-len', type=int, default=1)
-    parser.add_argument('--batch-size', type=int, default=1)
+    parser.add_argument('--output-len', type=int, default=2)
+    parser.add_argument('--batch-size', type=int, default=48)
     parser.add_argument('--n',
                         type=int,
                         default=1,
