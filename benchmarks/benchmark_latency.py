@@ -24,6 +24,7 @@ def main(args: argparse.Namespace):
         max_num_batched_tokens=args.batch_size * args.input_len,
         trust_remote_code=args.trust_remote_code,
         dtype=args.dtype,
+        cpu_only=args.cpu_only
     )
 
     sampling_params = SamplingParams(
@@ -88,6 +89,7 @@ if __name__ == '__main__':
     parser.add_argument('--trust-remote-code',
                         action='store_true',
                         help='trust remote code from huggingface')
+    parser.add_argument('--cpu_only', dest='cpu_only', default=False, action='store_true')
     parser.add_argument(
         '--dtype',
         type=str,

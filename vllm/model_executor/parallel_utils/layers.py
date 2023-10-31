@@ -62,7 +62,7 @@ class VocabParallelEmbedding(torch.nn.Module):
         self.weight = Parameter(
             torch.empty(self.num_embeddings_per_partition,
                         self.embedding_dim,
-                        device=torch.cuda.current_device(),
+                        #device=torch.cuda.current_device(),
                         dtype=params_dtype))
 
     def forward(self, input_):
@@ -140,7 +140,7 @@ class ColumnParallelLinear(torch.nn.Module):
         if bias:
             self.bias = Parameter(
                 torch.empty(self.output_size_per_partition,
-                            device=torch.cuda.current_device(),
+                            #device=torch.cuda.current_device(),
                             dtype=params_dtype))
         else:
             self.register_parameter('bias', None)
@@ -149,7 +149,7 @@ class ColumnParallelLinear(torch.nn.Module):
         self.weight = Parameter(
             torch.empty(self.output_size_per_partition,
                         self.input_size,
-                        device=torch.cuda.current_device(),
+                        #device=torch.cuda.current_device(),
                         dtype=dtype))
 
     def apply_weights(
@@ -246,7 +246,7 @@ class RowParallelLinear(torch.nn.Module):
         if bias:
             self.bias = Parameter(
                 torch.empty(self.output_size,
-                            device=torch.cuda.current_device(),
+                            #device=torch.cuda.current_device(),
                             dtype=params_dtype))
 
             # Always initialize bias to zero.
@@ -259,7 +259,7 @@ class RowParallelLinear(torch.nn.Module):
         self.weight = Parameter(
             torch.empty(self.output_size,
                         self.input_size_per_partition,
-                        device=torch.cuda.current_device(),
+                        #device=torch.cuda.current_device(),
                         dtype=dtype))
 
     def apply_weights(self, x: torch.Tensor) -> torch.Tensor:

@@ -6,7 +6,7 @@ from torch.nn.parameter import Parameter
 import os
 if os.getenv('VLLM_CPU_ONLY', "0") == "0":
     from vllm import quantization_ops
-from vllm.model_executor.parallel_utils.tensor_parallel.layers import (
+from vllm.model_executor.parallel_utils.layers import (
     ColumnParallelLinear, RowParallelLinear)
 
 

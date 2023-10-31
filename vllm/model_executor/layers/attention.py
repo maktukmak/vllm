@@ -285,7 +285,7 @@ class PagedAttention(nn.Module):
                 query.unsqueeze(0),
                 key.unsqueeze(0),
                 value.unsqueeze(0),
-                attn_bias=input_metadata.attn_bias[0],
+                attn_bias=input_metadata.attn_bias,
                 p=0.0,
                 scale=self.scale,
             )
@@ -295,7 +295,7 @@ class PagedAttention(nn.Module):
                                         value.unsqueeze(0),
                                         scale=self.scale,
                                         p=0.0,
-                                        attn_bias=input_metadata.attn_bias[0],
+                                        attn_bias=input_metadata.attn_bias,
                                         )
 
         # TODO(woosuk): Unnecessary copy. Optimize.
@@ -331,8 +331,8 @@ class PagedAttention(nn.Module):
             input_metadata: metadata for paged attention.
             alibi_slopes: shape = [num_heads]
         """
+        block_size = value_cache.shape[3]
         if query.device.type == "cuda":
-            block_size = value_cache.shape[3]
             num_seqs, num_heads, head_size = query.shape
             max_num_partitions = (
                 (input_metadata.max_context_len + _PARTITION_SIZE - 1) //
