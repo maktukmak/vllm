@@ -168,6 +168,92 @@ class PagedAttention(nn.Module):
         key_cache[block_idx, :, :, block_offset, :] = key.reshape((num_tokens, num_heads, head_size//x, x)).to(key_cache.device)
 
 
+    def attention_forward_cpu(self, query, key, value, scale, p, attn_bias):
+
+        query = query * scale
+
+        attn = torch.matmul(query.transpose(1,2), key.transpose(1, 2).transpose(2, 3))
+
+        if attn_bias is not None:
+            attn = attn + attn_bias.materialize((1, query.shape[2], query.shape[1], key.shape[1])).to(query.device)
+        attn = attn.softmax(-1)
+        attn = torch.nn.functional.dropout(attn, p)
+
+        out = torch.matmul(attn, value.transpose(1,2)).transpose(1,2)
+        return out
+    
+    def single_query_cached_kv_attention_cpu(self,
+                output,
+                query,
+                key_cache,
+                value_cache,
+                head_mapping,
+                scale,
+                block_tables,
+                context_lens,
+                block_size,
+                max_context_len,
+                alibi_slopes,  # alibi_slopes
+            ):
+
+        num_seqs = query.size(0)
+        num_heads = query.size(1)
+        head_size = query.size(2)
+        x = 4
+
+
+        query = query * scale
+
+        BLOCK_SIZE = key_cache.size(3)
+        num_blocks = (context_lens - 1 + BLOCK_SIZE ) // BLOCK_SIZE
+
+        for n in range(num_seqs): 
+
+            key = torch.empty(0, num_heads, head_size)
+            value = torch.empty(0, num_heads, head_size)
+
+            for i in range(num_blocks[n]):
+                if i == num_blocks[n]-1:
+                    offset = (context_lens[n]-1) % BLOCK_SIZE + 1
+                else:
+                    offset = (i+1) * BLOCK_SIZE
+
+                key_r = key_cache[block_tables[n][i], :, :, :offset, :]
+                key_r = key_r.permute(2, 0, 1, 3).flatten(-2,-1)
+
+                value_r = value_cache[block_tables[n][i], :, :, :offset]
+                value_r = value_r.permute(2, 0, 1)
+
+                key = torch.cat([key, key_r], axis=0)
+                value = torch.cat([value, value_r], axis=0)
+
+            attn = torch.matmul(query[n:n+1].unsqueeze(0).transpose(1,2), key.unsqueeze(0).transpose(1, 2).transpose(2, 3))
+            attn = attn.softmax(-1)
+            output[n:n+1] = torch.matmul(attn, value.unsqueeze(0).transpose(1,2)).transpose(1,2).squeeze(0)
+
+
+    def reshape_and_cache_cpu(self, key,              # [num_tokens, num_heads, head_size]
+                              value,            # [num_tokens, num_heads, head_size]
+                              key_cache,        # [num_blocks, num_heads, head_size/x, block_size, x]
+                              value_cache,      # [num_blocks, num_heads, head_size, block_size]
+                              slot_mapping):    # [num_tokens]
+
+        num_tokens = key.size(0)
+        num_heads = key.size(1)
+        head_size = key.size(2)
+        block_size = key_cache.size(3)
+        x = key_cache.size(4)
+        key_stride = key.stride(0)
+        value_stride = value.stride(0)
+        n = num_heads * head_size
+
+        block_idx = slot_mapping // block_size
+        block_offset = slot_mapping % block_size
+
+        value_cache[block_idx, :, :, block_offset] = value.to(value_cache.device)
+        key_cache[block_idx, :, :, block_offset, :] = key.reshape((num_tokens, num_heads, head_size//x, x)).to(key_cache.device)
+
+
     def multi_query_kv_attention(
         self,
         output: torch.Tensor,
