@@ -95,58 +95,9 @@ class PagedAttention(nn.Module):
 
         out = torch.matmul(attn, value.transpose(1,2)).transpose(1,2)
         return out
-    
-    def single_query_cached_kv_attention_cpu(self,
-                output,
-                query,
-                key_cache,
-                value_cache,
-                head_mapping,
-                scale,
-                block_tables,
-                context_lens,
-                block_size,
-                max_context_len,
-                alibi_slopes,  # alibi_slopes
-            ):
-
-        num_seqs = query.size(0)
-        num_heads = query.size(1)
-        head_size = query.size(2)
-        x = 4
 
 
-        query = query * scale
-
-        BLOCK_SIZE = key_cache.size(3)
-        num_blocks = (context_lens - 1 + BLOCK_SIZE ) // BLOCK_SIZE
-
-        for n in range(num_seqs): 
-
-            key = torch.empty(0, num_heads, head_size)
-            value = torch.empty(0, num_heads, head_size)
-
-            for i in range(num_blocks[n]):
-                if i == num_blocks[n]-1:
-                    offset = (context_lens[n]-1) % BLOCK_SIZE + 1
-                else:
-                    offset = (i+1) * BLOCK_SIZE
-
-                key_r = key_cache[block_tables[n][i], :, :, :offset, :]
-                key_r = key_r.permute(2, 0, 1, 3).flatten(-2,-1)
-
-                value_r = value_cache[block_tables[n][i], :, :, :offset]
-                value_r = value_r.permute(2, 0, 1)
-
-                key = torch.cat([key, key_r], axis=0)
-                value = torch.cat([value, value_r], axis=0)
-
-            attn = torch.matmul(query[n:n+1].unsqueeze(0).transpose(1,2), key.unsqueeze(0).transpose(1, 2).transpose(2, 3))
-            attn = attn.softmax(-1)
-            output[n:n+1] = torch.matmul(attn, value.unsqueeze(0).transpose(1,2)).transpose(1,2).squeeze(0)
-
-
-    def reshape_and_cache_cpu(self, key,              # [num_tokens, num_heads, head_size]
+    def reshape_and_cache_cpu(self, key,        # [num_tokens, num_heads, head_size]
                               value,            # [num_tokens, num_heads, head_size]
                               key_cache,        # [num_blocks, num_heads, head_size/x, block_size, x]
                               value_cache,      # [num_blocks, num_heads, head_size, block_size]
@@ -167,21 +118,6 @@ class PagedAttention(nn.Module):
         value_cache[block_idx, :, :, block_offset] = value.to(value_cache.device)
         key_cache[block_idx, :, :, block_offset, :] = key.reshape((num_tokens, num_heads, head_size//x, x)).to(key_cache.device)
 
-
-    def attention_forward_cpu(self, query, key, value, scale, p, attn_bias):
-
-        query = query * scale
-
-        attn = torch.matmul(query.transpose(1,2), key.transpose(1, 2).transpose(2, 3))
-
-        if attn_bias is not None:
-            attn = attn + attn_bias.materialize((1, query.shape[2], query.shape[1], key.shape[1])).to(query.device)
-        attn = attn.softmax(-1)
-        attn = torch.nn.functional.dropout(attn, p)
-
-        out = torch.matmul(attn, value.transpose(1,2)).transpose(1,2)
-        return out
-    
     def single_query_cached_kv_attention_cpu(self,
                 output,
                 query,
@@ -198,8 +134,8 @@ class PagedAttention(nn.Module):
 
         num_seqs = query.size(0)
         num_heads = query.size(1)
+        num_kv_heads = key_cache.size(1)
         head_size = query.size(2)
-        x = 4
 
 
         query = query * scale
@@ -209,8 +145,8 @@ class PagedAttention(nn.Module):
 
         for n in range(num_seqs): 
 
-            key = torch.empty(0, num_heads, head_size)
-            value = torch.empty(0, num_heads, head_size)
+            key = torch.empty(0, num_kv_heads, head_size)
+            value = torch.empty(0, num_kv_heads, head_size)
 
             for i in range(num_blocks[n]):
                 if i == num_blocks[n]-1:
@@ -227,31 +163,22 @@ class PagedAttention(nn.Module):
                 key = torch.cat([key, key_r], axis=0)
                 value = torch.cat([value, value_r], axis=0)
 
+
+            alibi_bias = None
+            if alibi_slopes is not None:
+                # Create the ALiBi bias used in the paged attention kernel.
+                position_ids = torch.arange(context_lens[n], device=query.device).int()
+                alibi_bias = (position_ids - context_lens[n] + 1).float()
+                alibi_bias = alibi_slopes.view(-1, 1, 1) * alibi_bias.view(1, 1, -1)
+
             attn = torch.matmul(query[n:n+1].unsqueeze(0).transpose(1,2), key.unsqueeze(0).transpose(1, 2).transpose(2, 3))
+            
+            if alibi_bias is not None:
+                attn = attn + alibi_bias
+            
             attn = attn.softmax(-1)
             output[n:n+1] = torch.matmul(attn, value.unsqueeze(0).transpose(1,2)).transpose(1,2).squeeze(0)
 
-
-    def reshape_and_cache_cpu(self, key,              # [num_tokens, num_heads, head_size]
-                              value,            # [num_tokens, num_heads, head_size]
-                              key_cache,        # [num_blocks, num_heads, head_size/x, block_size, x]
-                              value_cache,      # [num_blocks, num_heads, head_size, block_size]
-                              slot_mapping):    # [num_tokens]
-
-        num_tokens = key.size(0)
-        num_heads = key.size(1)
-        head_size = key.size(2)
-        block_size = key_cache.size(3)
-        x = key_cache.size(4)
-        key_stride = key.stride(0)
-        value_stride = value.stride(0)
-        n = num_heads * head_size
-
-        block_idx = slot_mapping // block_size
-        block_offset = slot_mapping % block_size
-
-        value_cache[block_idx, :, :, block_offset] = value.to(value_cache.device)
-        key_cache[block_idx, :, :, block_offset, :] = key.reshape((num_tokens, num_heads, head_size//x, x)).to(key_cache.device)
 
 
     def multi_query_kv_attention(
@@ -605,6 +532,7 @@ class PagedAttentionWithALiBi(PagedAttention):
         slopes = torch.tensor(slopes, dtype=torch.float32)
         self.register_buffer("alibi_slopes", slopes, persistent=False)
 
+
     def set_attn_bias(self, input_metadata: InputMetadata,
                       dtype: torch.dtype) -> None:
         if input_metadata.attn_bias is not None:
@@ -662,16 +590,28 @@ class PagedAttentionWithALiBi(PagedAttention):
         batch_size = input_metadata.num_prompts
         seq_len = input_metadata.max_prompt_len
 
-        out = xops.memory_efficient_attention_forward(
-            query.view(batch_size, seq_len, self.num_heads, self.head_size),
-            key.view(batch_size, seq_len, self.num_heads, self.head_size),
-            value.view(batch_size, seq_len, self.num_heads, self.head_size),
-            attn_bias=input_metadata.attn_bias,
-            p=0.0,
-            scale=self.scale,
-        )
+
+        if query.device.type == 'cuda':
+            out = xops.memory_efficient_attention_forward(
+                query.view(batch_size, seq_len, self.num_heads, self.head_size),
+                key.view(batch_size, seq_len, self.num_heads, self.head_size),
+                value.view(batch_size, seq_len, self.num_heads, self.head_size),
+                attn_bias=input_metadata.attn_bias,
+                p=0.0,
+                scale=self.scale,
+            )
+        else:
+            out = self.attention_forward_cpu( query.view(batch_size, seq_len, self.num_heads, self.head_size),
+                                        key.view(batch_size, seq_len, self.num_heads, self.head_size),
+                                        value.view(batch_size, seq_len, self.num_heads, self.head_size),
+                                        scale=self.scale,
+                                        p=0.0,
+                                        attn_bias=input_metadata.attn_bias,
+                                        )
+
+
         # TODO(woosuk): Unnecessary copy. Optimize.
-        output.copy_(out.view(-1, self.num_heads, self.head_size))
+        output.copy_(out.reshape(-1, self.num_heads, self.head_size))
         return output
 
     def get_alibi_slopes(self) -> Optional[torch.Tensor]:

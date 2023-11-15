@@ -173,7 +173,7 @@ class BlockSpaceManager:
             # The last block is shared with other sequences.
             # Copy on Write: Allocate a new block and copy the tokens.
             if cpu_only:
-                new_block = self.gpu_allocator.allocate()
+                new_block = self.cpu_allocator.allocate()
                 block_table[-1] = new_block
                 self.cpu_allocator.free(last_block)
             else:

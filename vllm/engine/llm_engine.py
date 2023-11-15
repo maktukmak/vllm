@@ -613,7 +613,9 @@ class LLMEngine:
         num_free_gpu_blocks = (
             self.scheduler.block_manager.get_num_free_gpu_blocks())
         num_used_gpu_blocks = total_num_gpu_blocks - num_free_gpu_blocks
-        gpu_cache_usage = num_used_gpu_blocks / total_num_gpu_blocks
+        gpu_cache_usage = 0
+        if total_num_gpu_blocks > 0:
+            gpu_cache_usage = num_used_gpu_blocks / total_num_gpu_blocks
 
         total_num_cpu_blocks = self.cache_config.num_cpu_blocks
         if total_num_cpu_blocks > 0:
