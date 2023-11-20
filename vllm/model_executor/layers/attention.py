@@ -86,7 +86,10 @@ class PagedAttention(nn.Module):
 
         query = query * scale
 
+        print("Query shape:", query.transpose(1,2).shape)
+        print("Key shape:", key.transpose(1, 2).transpose(2, 3).shape)
         attn = torch.matmul(query.transpose(1,2), key.transpose(1, 2).transpose(2, 3))
+        
 
         if attn_bias is not None:
             attn = attn + attn_bias.materialize((1, query.shape[2], query.shape[1], key.shape[1])).to(query.device)
@@ -94,6 +97,8 @@ class PagedAttention(nn.Module):
         attn = torch.nn.functional.dropout(attn, p)
 
         out = torch.matmul(attn, value.transpose(1,2)).transpose(1,2)
+
+        print("Out shape:", out.shape)
         return out
 
 

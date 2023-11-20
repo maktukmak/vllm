@@ -408,6 +408,8 @@ class Worker:
         else:
             cache = self.gpu_cache
 
+        print('Model input shape:', input_tokens.shape)
+
         # Execute the model.
         output = self.model(
             input_ids=input_tokens,
