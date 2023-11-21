@@ -53,54 +53,102 @@ async def post_all(prompts, max_tokens, api_url, n, stream, concurrent, delays=0
             for i in range(n_req):
                 
                 seq_start = time.time()
-                await post_http_request(0.0*i, session, prompts[i], max_tokens[i], api_url, n, stream)
+                await post_http_request(0.0, session, prompts[i], max_tokens[i], api_url, n, stream)
                 if i < n_req-1:
                     while(time.time() - seq_start <  (delays[i+1] - delays[i])): True
 
 
 if __name__ == '__main__':
 
-
-    n_req = 100
-    inp_lens = np.random.uniform(1, 512, n_req).astype(int)
-    inp_lens = [256] * n_req
-    prompts = ["San " * l for l in inp_lens]
-    out_lens = [1] * n_req
-    #delays = np.cumsum(np.random.poisson(10, n_req-1) * 0.001)
-    delays = np.cumsum([0.0] * (n_req-1))
-    delays = np.concatenate(([0], delays))
-    
-
     api_url = f"http://localhost:8000/generate"
-    n = 1
     stream = False
-    
-    print('Concurrent')
-    concurrent = True
-    res = []
-    start = time.time()
-    asyncio.run(post_all(prompts, out_lens, api_url, n, stream, concurrent, delays))
-    latencies_concurrent = np.array(res) - delays
-    print(np.median(latencies_concurrent))
-
-    print('Sequential')
-    concurrent = False
-    res = []
-    start = time.time()
-    asyncio.run(post_all(prompts, out_lens, api_url, n, stream, concurrent, delays))
-    latencies_sequential = np.array(res) - delays
-    print(np.median(latencies_sequential))
 
 
-    hist, bins = np.histogram(latencies_concurrent, bins=10)
-    bin_centers = (bins[1:]+bins[:-1])*0.5
-    plt.plot(bin_centers, np.cumsum(hist) / np.sum(hist), label='Continuous')
 
-    hist, bins = np.histogram(latencies_sequential, bins=10)
-    bin_centers = (bins[1:]+bins[:-1])*0.5
-    plt.plot(bin_centers, np.cumsum(hist) / np.sum(hist), label='FCFS')
-    plt.xlabel('Latency (s)')
-    plt.ylabel('CDF')
-    plt.legend()
-    plt.savefig('cdf.jpg')
+    if True:
+        n_req = 50
+        inp_lens = [16] * n_req
+        prompts = ["San " * l for l in inp_lens]
+        out_lens = [1] * n_req
+        delays = np.cumsum([0.0] * (n_req-1))
+        delays = np.concatenate(([0], delays))
+        n = 1
+
+        rates = 0.005 * np.arange(1, 10)
+        res_list_conc = []
+        res_list_seq = []
+        for rate in rates:
+            delays = np.cumsum([rate] * (n_req-1))
+            delays = np.concatenate(([0], delays))
+
+            print('Concurrent')
+            concurrent = True
+            res = []
+            start = time.time()
+            asyncio.run(post_all(prompts, out_lens, api_url, n, stream, concurrent, delays))
+            latencies_concurrent = np.array(res) - delays
+            print(np.median(latencies_concurrent))
+            res_list_conc.append(np.median(latencies_concurrent))
+
+            print('Sequential')
+            concurrent = False
+            res = []
+            start = time.time()
+            asyncio.run(post_all(prompts, out_lens, api_url, n, stream, concurrent, delays))
+            latencies_concurrent = np.array(res) - delays
+            print(np.median(latencies_concurrent))
+            res_list_seq.append(np.median(latencies_concurrent))
+
+
+        plt.plot(1/np.array(rates), res_list_conc, marker='o', label='Continuous')
+        plt.plot(1/np.array(rates), res_list_seq, marker='o', label='FCFS')
+        plt.xlabel('Query per sec')
+        plt.ylabel('Median turnaround time (s)')
+        plt.legend()
+        plt.xscale('log', base=2)
+        plt.grid()
+        plt.savefig('rate_vs_latency_cpu.jpg')
+
+
+    if False:
+
+        n_req = 100
+        inp_lens = np.random.uniform(1, 512, n_req).astype(int)
+        inp_lens = [256] * n_req
+        prompts = ["San " * l for l in inp_lens]
+        out_lens = [1] * n_req
+        #delays = np.cumsum(np.random.poisson(10, n_req-1) * 0.001)
+        delays = np.cumsum([0.0] * (n_req-1))
+        delays = np.concatenate(([0], delays))
+        n = 1
+        
+        
+        print('Concurrent')
+        concurrent = True
+        res = []
+        start = time.time()
+        asyncio.run(post_all(prompts, out_lens, api_url, n, stream, concurrent, delays))
+        latencies_concurrent = np.array(res) - delays
+        print(np.median(latencies_concurrent))
+
+        print('Sequential')
+        concurrent = False
+        res = []
+        start = time.time()
+        asyncio.run(post_all(prompts, out_lens, api_url, n, stream, concurrent, delays))
+        latencies_sequential = np.array(res) - delays
+        print(np.median(latencies_sequential))
+
+
+        hist, bins = np.histogram(latencies_concurrent, bins=10)
+        bin_centers = (bins[1:]+bins[:-1])*0.5
+        plt.plot(bin_centers, np.cumsum(hist) / np.sum(hist), label='Continuous')
+
+        hist, bins = np.histogram(latencies_sequential, bins=10)
+        bin_centers = (bins[1:]+bins[:-1])*0.5
+        plt.plot(bin_centers, np.cumsum(hist) / np.sum(hist), label='FCFS')
+        plt.xlabel('Latency (s)')
+        plt.ylabel('CDF')
+        plt.legend()
+        plt.savefig('cdf.jpg')
 

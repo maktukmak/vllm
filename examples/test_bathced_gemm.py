@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 n_head = 12
 n_seq = 2048
 n_dim = 64
-device = "cuda"
+device = "cpu"
 
 n_batch_list = [1, 2, 4, 8, 16, 32, 64, 128]
 res_list = []
@@ -32,5 +32,6 @@ plt.ylabel('Turnaround (s)')
 plt.ylim(0, max(res_list) + 0.1*max(res_list))
 plt.xscale('log', base=2)
 plt.legend()
+plt.grid()
 plt.savefig('gemm_' + device + '.jpg')
 
