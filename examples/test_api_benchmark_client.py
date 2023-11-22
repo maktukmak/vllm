@@ -29,12 +29,13 @@ async def post_http_request(delay, session,
 
     await asyncio.sleep(delay)
     rel_start = time.time() - start
-    print(f'Start time: {rel_start:.2f}')
+    #print(f'Start time: {rel_start:.2f}')
 
     async with session.post(api_url, headers=headers, json=pload) as response:
-        #print(response.status)
+        if (response.status != 200):
+            raise
         rel_finish = time.time() - start
-        print(f'Finish Time: {rel_finish:.2f}')
+        #print(f'Finish Time: {rel_finish:.2f}')
         res.append(rel_finish)
 
 
@@ -66,19 +67,20 @@ if __name__ == '__main__':
 
 
     if True:
-        n_req = 50
-        inp_lens = [16] * n_req
-        prompts = ["San " * l for l in inp_lens]
-        out_lens = [1] * n_req
-        delays = np.cumsum([0.0] * (n_req-1))
-        delays = np.concatenate(([0], delays))
-        n = 1
 
-        rates = 0.005 * np.arange(1, 10)
+
+        rates = 2 ** np.arange(2, 19, 2)
         res_list_conc = []
         res_list_seq = []
         for rate in rates:
-            delays = np.cumsum([rate] * (n_req-1))
+
+            n_req = rate * 10
+            inp_lens = [16] * n_req
+            prompts = ["San " * l for l in inp_lens]
+            out_lens = [1] * n_req
+            n = 1
+
+            delays = np.cumsum([1 / rate] * (n_req-1))
             delays = np.concatenate(([0], delays))
 
             print('Concurrent')
@@ -100,8 +102,8 @@ if __name__ == '__main__':
             res_list_seq.append(np.median(latencies_concurrent))
 
 
-        plt.plot(1/np.array(rates), res_list_conc, marker='o', label='Continuous')
-        plt.plot(1/np.array(rates), res_list_seq, marker='o', label='FCFS')
+        plt.plot(rates, res_list_conc, marker='o', label='Continuous')
+        plt.plot(rates, res_list_seq, marker='o', label='FCFS')
         plt.xlabel('Query per sec')
         plt.ylabel('Median turnaround time (s)')
         plt.legend()
